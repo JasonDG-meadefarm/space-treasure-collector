@@ -1,26 +1,19 @@
- 
+# My First Logic Game 🎮
 
+## About
+Welcome to my first programming project!
 
-> Open this page at [https://jasondg-meadefarm.github.io/space-treasure-collector/](https://jasondg-meadefarm.github.io/space-treasure-collector/)
+I'm learning programming during my work experience placement.
 
-## Use as Extension
+## My Goals
+- Learn Python or MakeCode Arcade.
+- Understand variables and conditions.
+- Practise loops and boolean logic.
+- Build a playable mini-game.
 
-This repository can be added as an **extension** in MakeCode.
+## Progress
+- [x] Created my GitHub account.
+- [x] Created my first repository.
+- [ ] Built my first mini-game.
 
-* open [https://arcade.makecode.com/](https://arcade.makecode.com/)
-* click on **New Project**
-* click on **Extensions** under the gearwheel menu
-* search for **https://github.com/jasondg-meadefarm/space-treasure-collector** and import
-
-## Edit this project
-
-To edit this repository in MakeCode.
-
-* open [https://arcade.makecode.com/](https://arcade.makecode.com/)
-* click on **Import** then click on **Import URL**
-* paste **https://github.com/jasondg-meadefarm/space-treasure-collector** and click import
-
-#### Metadata (used for search, rendering)
-
-* for PXT/arcade
-<script src="https://makecode.com/gh-pages-embed.js"></script><script>makeCodeRender("{{ site.makecode.home_url }}", "{{ site.github.owner_name }}/{{ site.github.repository_name }}");</script>
+More updates coming soon!
