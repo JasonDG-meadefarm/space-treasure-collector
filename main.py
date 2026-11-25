@@ -199,6 +199,10 @@ def update_minimap():
 # ==================================================
 def respawn_chest(index: number):
     global candidateX, candidateY, validPosition, attempts
+    # Reset these for EVERY respawn. Without this, later respawns can
+    # reuse an old position because validPosition stays True.
+    validPosition = False
+    attempts = 0
     while validPosition == False and attempts < 100:
         candidateX = randint(150, WORLD_WIDTH - 150)
         candidateY = randint(150, WORLD_HEIGHT - 150)
@@ -409,6 +413,251 @@ WORLD_WIDTH = 0
 treasureWorldY: List[number] = []
 treasureWorldX: List[number] = []
 treasureSprites: List[Sprite] = []
+ufoSprites: List[Sprite] = []
+ufoDisabledUntil = [0, 0, 0]
+# A: tap = 3-second boost; hold 0.45 seconds and release = 1000-pixel hyperjump.
+# Both A abilities share a 15-second cooldown.
+boostUntil = 0
+boostCooldownUntil = 0
+aPressStart = 0
+aPressAllowed = False
+aHolding = False
+warpFlashUntil = 0
+
+# B: hold to charge a capped orb; release = non-damaging UFO-disabling pulse.
+# The pulse has a 0.5-second cooldown.
+attackCharging = False
+attackChargeStart = 0
+attackChargeLevel = 0
+attackCooldownUntil = 0
+attackPulseUntil = 0
+attackPulseRange = 0
+
+# Visual ability sprites and images
+chargeOrbImages: List[Image] = []
+pulseImages: List[Image] = []
+warpImages: List[Image] = []
+chargeOrbSprite: Sprite = None
+pulseSprite: Sprite = None
+warpSprite: Sprite = None
+hudImage: Image = None
+hudSprite: Sprite = None
+# ==================================================
+# ABILITY VISUALS AND HUD FONT
+# ==================================================
+def make_charge_orb_image(radius: number):
+    size = radius * 2 + 1
+    centre = radius
+    orbImage = image.create(size, size)
+    y = 0
+    while y < size:
+        x = 0
+        while x < size:
+            dx = x - centre
+            dy = y - centre
+            distanceSquared = dx * dx + dy * dy
+            if distanceSquared <= radius * radius:
+                if distanceSquared <= (radius - 2) * (radius - 2):
+                    orbColor = 1
+                elif distanceSquared <= (radius - 1) * (radius - 1):
+                    orbColor = 9
+                else:
+                    orbColor = 13
+                orbImage.set_pixel(x, y, orbColor)
+            x += 1
+        y += 1
+    return orbImage
+
+def make_pulse_image(radius: number):
+    size = radius * 2 + 1
+    centre = radius
+    pulseImage = image.create(size, size)
+    y = 0
+    while y < size:
+        x = 0
+        while x < size:
+            dx = x - centre
+            dy = y - centre
+            distanceSquared = dx * dx + dy * dy
+            if distanceSquared <= radius * radius and distanceSquared >= (radius - 2) * (radius - 2):
+                pulseImage.set_pixel(x, y, 9)
+            elif distanceSquared <= (radius - 6) * (radius - 6) and distanceSquared >= (radius - 8) * (radius - 8):
+                pulseImage.set_pixel(x, y, 12)
+            x += 1
+        y += 1
+    return pulseImage
+
+def make_warp_image(frame: number):
+    size = 49
+    centre = 24
+    warpImage = image.create(size, size)
+    y = 0
+    while y < size:
+        x = 0
+        while x < size:
+            dx = x - centre
+            dy = y - centre
+            distanceSquared = dx * dx + dy * dy
+            if distanceSquared >= 11 * 11 and distanceSquared <= 22 * 22:
+                pattern = (x * 2 + y * 3 + frame * 5) % 13
+                if pattern < 4:
+                    warpImage.set_pixel(x, y, 9)
+                elif pattern < 7:
+                    warpImage.set_pixel(x, y, 13)
+            elif distanceSquared >= 7 * 7 and distanceSquared <= 9 * 9:
+                warpImage.set_pixel(x, y, 1)
+            x += 1
+        y += 1
+    return warpImage
+
+def tiny_glyph(character):
+    blank = ["000", "000", "000", "000", "000"]
+    if character == "A":
+        return ["010", "101", "111", "101", "101"]
+    if character == "B":
+        return ["110", "101", "110", "101", "110"]
+    if character == "C":
+        return ["011", "100", "100", "100", "011"]
+    if character == "D":
+        return ["110", "101", "101", "101", "110"]
+    if character == "E":
+        return ["111", "100", "110", "100", "111"]
+    if character == "K":
+        return ["101", "101", "110", "101", "101"]
+    if character == "O":
+        return ["010", "101", "101", "101", "010"]
+    if character == "R":
+        return ["110", "101", "110", "101", "101"]
+    if character == "S":
+        return ["011", "100", "010", "001", "110"]
+    if character == "T":
+        return ["111", "010", "010", "010", "010"]
+    if character == "Y":
+        return ["101", "101", "010", "010", "010"]
+    if character == "0":
+        return ["111", "101", "101", "101", "111"]
+    if character == "1":
+        return ["010", "110", "010", "010", "111"]
+    if character == "2":
+        return ["110", "001", "010", "100", "111"]
+    if character == "3":
+        return ["110", "001", "010", "001", "110"]
+    if character == "4":
+        return ["101", "101", "111", "001", "001"]
+    if character == "5":
+        return ["111", "100", "110", "001", "110"]
+    if character == "6":
+        return ["011", "100", "110", "101", "010"]
+    if character == "7":
+        return ["111", "001", "010", "010", "010"]
+    if character == "8":
+        return ["010", "101", "010", "101", "010"]
+    if character == "9":
+        return ["010", "101", "011", "001", "110"]
+    if character == ":":
+        return ["000", "010", "000", "010", "000"]
+    if character == ".":
+        return ["000", "000", "000", "000", "010"]
+    return blank
+
+def draw_tiny_text(target: Image, textValue, startX: number, startY: number, color: number):
+    charIndex = 0
+    while charIndex < len(textValue):
+        glyph = tiny_glyph(textValue[charIndex])
+        row = 0
+        while row < 5:
+            column = 0
+            while column < 3:
+                if glyph[row][column] == "1":
+                    target.set_pixel(startX + charIndex * 4 + column, startY + row, color)
+                column += 1
+            row += 1
+        charIndex += 1
+
+def time_label(milliseconds: number):
+    if milliseconds < 0:
+        milliseconds = 0
+    tenths = Math.idiv(milliseconds + 99, 100)
+    return str(Math.idiv(tenths, 10)) + "." + str(tenths % 10) + "S"
+
+def update_ability_hud():
+    now = game.runtime()
+    hudImage.fill(15)
+    if now < boostUntil:
+        boostText = "BOOST: " + time_label(boostUntil - now)
+    elif now < boostCooldownUntil:
+        boostText = "BOOST CD: " + time_label(boostCooldownUntil - now)
+    else:
+        boostText = "BOOST CD: READY"
+    if now < attackCooldownUntil:
+        attackText = "ATK CD: " + time_label(attackCooldownUntil - now)
+    else:
+        attackText = "ATK CD: READY"
+    draw_tiny_text(hudImage, boostText, 2, 1, 9)
+    draw_tiny_text(hudImage, attackText, 2, 9, 12)
+    hudSprite.set_image(hudImage)
+
+def facing_x():
+    direction = mySprite.rotation_degrees
+    if direction == 90:
+        return 1
+    elif direction == -90 or direction == 270:
+        return -1
+    return 0
+
+def facing_y():
+    direction = mySprite.rotation_degrees
+    if direction == 180:
+        return 1
+    elif direction == 0:
+        return -1
+    return 0
+
+def perform_hyperjump():
+    global shipWorldX, shipWorldY, shipVX, shipVY
+    global boostUntil, boostCooldownUntil, warpFlashUntil
+    directionX = facing_x()
+    directionY = facing_y()
+    destinationX = shipWorldX + directionX * 1000
+    destinationY = shipWorldY + directionY * 1000
+    # Wrap to the opposite edge if the 1000-pixel jump crosses a border.
+    shipWorldX = 10 + ((destinationX - 10) % (WORLD_WIDTH - 20))
+    shipWorldY = 10 + ((destinationY - 10) % (WORLD_HEIGHT - 20))
+    shipVX = directionX * 0.8
+    shipVY = directionY * 0.8
+    boostUntil = 0
+    boostCooldownUntil = game.runtime() + 15000
+    warpFlashUntil = game.runtime() + 550
+
+def on_a_pressed():
+    global aPressStart, aPressAllowed, aHolding
+    if gameEnded or endingState != ENDING_NORMAL:
+        return
+    now = game.runtime()
+    aPressStart = now
+    aPressAllowed = now >= boostCooldownUntil
+    aHolding = aPressAllowed
+    if aHolding:
+        warpSprite.set_flag(SpriteFlag.INVISIBLE, False)
+
+def on_a_released():
+    global aHolding, boostUntil, boostCooldownUntil, warpFlashUntil
+    now = game.runtime()
+    heldFor = now - aPressStart
+    wasAllowed = aPressAllowed
+    aHolding = False
+    if not wasAllowed or gameEnded or endingState != ENDING_NORMAL:
+        warpSprite.set_flag(SpriteFlag.INVISIBLE, True)
+        return
+    if heldFor >= 450:
+        perform_hyperjump()
+    else:
+        # A quick tap starts a three-second speed boost.
+        boostUntil = now + 3000
+        boostCooldownUntil = boostUntil + 15000
+        warpFlashUntil = now + 200
+    warpSprite.set_flag(SpriteFlag.INVISIBLE, False)
+
 # ==================================================
 # SPACE TREASURE COLLECTOR
 # EXPANDED SOLAR SYSTEM + LIVE MINIMAP
@@ -482,9 +731,23 @@ radius3 = 400
 # ==================================================
 # BACKGROUND
 # ==================================================
-# Completely black background.
-# No white dots or background star sprites.
-scene.set_background_color(15)
+# BLACK SPACE BACKGROUND WITH A SPARSE WHITE STARFIELD
+# This is a background image, not sprite objects, so it will not
+# interfere with treasure, asteroid, or UFO collisions.
+spaceBackground = image.create(160, 120)
+spaceBackground.fill(15)
+starDot = 0
+while starDot < 85:
+    starXPixel = randint(0, 159)
+    starYPixel = randint(0, 119)
+    starColour = 1
+    if starDot % 3 == 0:
+        starColour = 12
+    elif starDot % 5 == 0:
+        starColour = 13
+    spaceBackground.set_pixel(starXPixel, starYPixel, starColour)
+    starDot += 1
+scene.set_background_image(spaceBackground)
 # ==================================================
 # RED GRADIENT BACKGROUND
 # ==================================================
@@ -683,6 +946,127 @@ asteroid1 = create_asteroid(1)
 asteroid2 = create_asteroid(2)
 asteroid3 = create_asteroid(3)
 # ==================================================
+# FLYING UFOs
+# ==================================================
+ufoImage = img("""
+    . . . . . . 8 8 8 8 . . . . . .
+    . . . 8 8 8 9 9 9 9 8 8 8 . . .
+    . . 8 9 9 9 9 9 9 9 9 9 9 8 . .
+    8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8
+    . . . 8 8 8 8 8 8 8 8 8 8 . . .
+    . . . . . 8 . . . . 8 . . . . .
+    """)
+UFO_COUNT = 3
+# Each UFO loops around its own nearby point, at a different speed.
+ufoCentreX = [1365, 1450, 1500]
+ufoCentreY = [1500, 1500, 1600]
+ufoRadiusX = [55, 80, 100]
+ufoRadiusY = [35, 50, 55]
+ufoStartAngle = [0, 1.57, 3.14]
+ufoOrbitSpeed = [0.00036, 0.00031, 0.00025]
+ufoIndex = 0
+while ufoIndex < UFO_COUNT:
+    flyingUfo = sprites.create(ufoImage, SpriteKind.enemy)
+    flyingUfo.z = 35
+    # Place each UFO away from the ship before the first game update.
+    initialAngle = game.runtime() * ufoOrbitSpeed[ufoIndex] + ufoStartAngle[ufoIndex]
+    initialUfoX = ufoCentreX[ufoIndex] + Math.cos(initialAngle) * ufoRadiusX[ufoIndex]
+    initialUfoY = ufoCentreY[ufoIndex] + Math.sin(initialAngle) * ufoRadiusY[ufoIndex]
+    flyingUfo.set_position(initialUfoX - shipWorldX + SCREEN_CENTER_X,
+        initialUfoY - shipWorldY + SCREEN_CENTER_Y)
+    ufoSprites.append(flyingUfo)
+    ufoIndex += 1
+
+# ==================================================
+# CHARGED B PULSE
+# Hold B to charge a glowing orb. Releasing B sends a
+# non-damaging defensive pulse around the ship.
+# ==================================================
+chargeOrbImages = [make_charge_orb_image(3), make_charge_orb_image(4),
+    make_charge_orb_image(5), make_charge_orb_image(6),
+    make_charge_orb_image(7), make_charge_orb_image(8)]
+pulseImages = [make_pulse_image(12), make_pulse_image(15),
+    make_pulse_image(18), make_pulse_image(21),
+    make_pulse_image(24), make_pulse_image(27)]
+warpImages = [make_warp_image(0), make_warp_image(1),
+    make_warp_image(2), make_warp_image(3)]
+
+chargeOrbSprite = sprites.create(chargeOrbImages[0], SpriteKind.projectile)
+chargeOrbSprite.set_flag(SpriteFlag.GHOST, True)
+chargeOrbSprite.set_flag(SpriteFlag.RELATIVE_TO_CAMERA, True)
+chargeOrbSprite.set_flag(SpriteFlag.INVISIBLE, True)
+chargeOrbSprite.z = 160
+
+pulseSprite = sprites.create(pulseImages[0], SpriteKind.projectile)
+pulseSprite.set_flag(SpriteFlag.GHOST, True)
+pulseSprite.set_flag(SpriteFlag.RELATIVE_TO_CAMERA, True)
+pulseSprite.set_flag(SpriteFlag.INVISIBLE, True)
+pulseSprite.set_position(SCREEN_CENTER_X, SCREEN_CENTER_Y)
+pulseSprite.z = 150
+
+warpSprite = sprites.create(warpImages[0], SpriteKind.projectile)
+warpSprite.set_flag(SpriteFlag.GHOST, True)
+warpSprite.set_flag(SpriteFlag.RELATIVE_TO_CAMERA, True)
+warpSprite.set_flag(SpriteFlag.INVISIBLE, True)
+warpSprite.set_position(SCREEN_CENTER_X, SCREEN_CENTER_Y)
+warpSprite.z = 90
+
+# Small pixel-font HUD avoids requiring another extension.
+hudImage = image.create(100, 16)
+hudImage.fill(15)
+hudSprite = sprites.create(hudImage, SpriteKind.projectile)
+hudSprite.set_flag(SpriteFlag.GHOST, True)
+hudSprite.set_flag(SpriteFlag.RELATIVE_TO_CAMERA, True)
+hudSprite.set_position(50, 9)
+hudSprite.z = 260
+
+def on_b_pressed():
+    global attackCharging, attackChargeStart, attackChargeLevel
+    if gameEnded or endingState != ENDING_NORMAL:
+        return
+    if attackCharging or game.runtime() < attackCooldownUntil:
+        return
+    attackCharging = True
+    attackChargeStart = game.runtime()
+    attackChargeLevel = 0
+    chargeOrbSprite.set_image(chargeOrbImages[0])
+    chargeOrbSprite.set_flag(SpriteFlag.INVISIBLE, False)
+
+def on_b_released():
+    global attackCharging, attackChargeLevel, attackCooldownUntil
+    global attackPulseUntil, attackPulseRange
+    if not attackCharging:
+        return
+    now = game.runtime()
+    attackCharging = False
+    attackChargeLevel = Math.idiv(now - attackChargeStart, 400)
+    if attackChargeLevel > len(chargeOrbImages) - 1:
+        attackChargeLevel = len(chargeOrbImages) - 1
+    attackPulseRange = 120 + attackChargeLevel * 30
+    attackPulseUntil = now + 450
+    attackCooldownUntil = now + 500
+    chargeOrbSprite.set_flag(SpriteFlag.INVISIBLE, True)
+    pulseSprite.set_image(pulseImages[attackChargeLevel])
+    pulseSprite.set_position(SCREEN_CENTER_X, SCREEN_CENTER_Y)
+    pulseSprite.set_flag(SpriteFlag.INVISIBLE, False)
+    # The pulse briefly disables any UFOs close enough to the ship.
+    ufoIndex = 0
+    while ufoIndex < UFO_COUNT:
+        ufoAngle = now * ufoOrbitSpeed[ufoIndex] + ufoStartAngle[ufoIndex]
+        nearbyUfoX = ufoCentreX[ufoIndex] + Math.cos(ufoAngle) * ufoRadiusX[ufoIndex]
+        nearbyUfoY = ufoCentreY[ufoIndex] + Math.sin(ufoAngle) * ufoRadiusY[ufoIndex]
+        dxUfo = nearbyUfoX - shipWorldX
+        dyUfo = nearbyUfoY - shipWorldY
+        if dxUfo * dxUfo + dyUfo * dyUfo <= attackPulseRange * attackPulseRange:
+            ufoDisabledUntil[ufoIndex] = now + 2200
+        ufoIndex += 1
+
+controller.B.on_event(ControllerButtonEvent.PRESSED, on_b_pressed)
+controller.B.on_event(ControllerButtonEvent.RELEASED, on_b_released)
+controller.A.on_event(ControllerButtonEvent.PRESSED, on_a_pressed)
+controller.A.on_event(ControllerButtonEvent.RELEASED, on_a_released)
+game.on_update_interval(100, update_ability_hud)
+# ==================================================
 # MINIMAP SETTINGS
 # ==================================================
 MINIMAP_WIDTH = 64
@@ -710,7 +1094,7 @@ info.set_score(0)
 # ==================================================
 
 def on_on_update():
-    global acceleration, shipVX, shipVY, shipWorldX, shipWorldY, planetAngle1, planetAngle2, planetAngle3, angle1, angle2, angle3, sunDistance, gameEnded, healthBarVisible
+    global acceleration, shipVX, shipVY, shipWorldX, shipWorldY, planetAngle1, planetAngle2, planetAngle3, angle1, angle2, angle3, sunDistance, gameEnded, healthBarVisible, attackChargeLevel
     if gameEnded:
         return
     # ----------------------------------------------
@@ -725,27 +1109,59 @@ def on_on_update():
     elif controller.up.is_pressed() and not (controller.down.is_pressed()):
         mySprite.rotation_degrees = 0
     # ----------------------------------------------
-    # SHIP ACCELERATION
+    # A-BUTTON WORMHOLE VISUAL WHILE HELD
     # ----------------------------------------------
-    acceleration = shipSpeed / 200
+    abilityNow = game.runtime()
+    if aHolding:
+        warpFrame = Math.idiv(abilityNow, 100) % len(warpImages)
+        warpSprite.set_image(warpImages[warpFrame])
+        warpSprite.rotation_degrees = Math.idiv(abilityNow, 8) % 360
+        warpSprite.set_position(SCREEN_CENTER_X, SCREEN_CENTER_Y)
+        warpSprite.set_flag(SpriteFlag.INVISIBLE, False)
+    elif abilityNow >= warpFlashUntil:
+        warpSprite.set_flag(SpriteFlag.INVISIBLE, True)
+    # ----------------------------------------------
+    # B-BUTTON CHARGE ORB GROWS WHILE HELD
+    # ----------------------------------------------
+    if attackCharging:
+        attackChargeLevel = Math.idiv(abilityNow - attackChargeStart, 400)
+        if attackChargeLevel > len(chargeOrbImages) - 1:
+            attackChargeLevel = len(chargeOrbImages) - 1
+        chargeOrbSprite.set_image(chargeOrbImages[attackChargeLevel])
+        facingX = facing_x()
+        facingY = facing_y()
+        chargeOrbSprite.set_position(SCREEN_CENTER_X + facingX * 22,
+            SCREEN_CENTER_Y + facingY * 22)
+        chargeOrbSprite.set_flag(SpriteFlag.INVISIBLE, False)
+    if abilityNow >= attackPulseUntil:
+        pulseSprite.set_flag(SpriteFlag.INVISIBLE, True)
+    # ----------------------------------------------
+    # SHIP ACCELERATION (BOOST MAKES THE SHIP FASTER)
+    # ----------------------------------------------
+    if abilityNow < boostUntil:
+        acceleration = shipSpeed / 75
+        currentMaxVelocity = 7.5
+    else:
+        acceleration = shipSpeed / 200
+        currentMaxVelocity = MAX_SHIP_VELOCITY
     if controller.left.is_pressed() and not (controller.right.is_pressed()):
         shipVX += 0 - acceleration
-        if shipVX < 0 - MAX_SHIP_VELOCITY:
-            shipVX = 0 - MAX_SHIP_VELOCITY
+        if shipVX < 0 - currentMaxVelocity:
+            shipVX = 0 - currentMaxVelocity
     elif controller.right.is_pressed() and not (controller.left.is_pressed()):
         shipVX += acceleration
-        if shipVX > MAX_SHIP_VELOCITY:
-            shipVX = MAX_SHIP_VELOCITY
+        if shipVX > currentMaxVelocity:
+            shipVX = currentMaxVelocity
     else:
         shipVX = shipVX * 0.94
     if controller.up.is_pressed() and not (controller.down.is_pressed()):
         shipVY += 0 - acceleration
-        if shipVY < 0 - MAX_SHIP_VELOCITY:
-            shipVY = 0 - MAX_SHIP_VELOCITY
+        if shipVY < 0 - currentMaxVelocity:
+            shipVY = 0 - currentMaxVelocity
     elif controller.down.is_pressed() and not (controller.up.is_pressed()):
         shipVY += acceleration
-        if shipVY > MAX_SHIP_VELOCITY:
-            shipVY = MAX_SHIP_VELOCITY
+        if shipVY > currentMaxVelocity:
+            shipVY = currentMaxVelocity
     else:
         shipVY = shipVY * 0.94
     # ----------------------------------------------
@@ -793,6 +1209,22 @@ def on_on_update():
     spriteutils.place_angle_from(asteroid2, angle2, radius2, centralStar)
     spriteutils.place_angle_from(asteroid3, angle3, radius3, centralStar)
     # ----------------------------------------------
+    # UFO FLIGHT PATHS AND DISABLE TIMER
+    # ----------------------------------------------
+    ufoNow = game.runtime()
+    ufoIndex = 0
+    while ufoIndex < UFO_COUNT:
+        ufoAngle = ufoNow * ufoOrbitSpeed[ufoIndex] + ufoStartAngle[ufoIndex]
+        ufoWorldX = ufoCentreX[ufoIndex] + Math.cos(ufoAngle) * ufoRadiusX[ufoIndex]
+        ufoWorldY = ufoCentreY[ufoIndex] + Math.sin(ufoAngle) * ufoRadiusY[ufoIndex]
+        ufoSprites[ufoIndex].set_position(ufoWorldX - shipWorldX + SCREEN_CENTER_X,
+            ufoWorldY - shipWorldY + SCREEN_CENTER_Y)
+        if ufoNow < ufoDisabledUntil[ufoIndex]:
+            ufoSprites[ufoIndex].set_flag(SpriteFlag.GHOST, True)
+        else:
+            ufoSprites[ufoIndex].set_flag(SpriteFlag.GHOST, False)
+        ufoIndex += 1
+    # ----------------------------------------------
     # TREASURE CHEST POSITIONS
     # ----------------------------------------------
     m = 0
@@ -817,6 +1249,8 @@ def on_on_update():
     # HEALTH BAR
     # ----------------------------------------------
     health_bar.set_position(SCREEN_CENTER_X, SCREEN_CENTER_Y - 15)
+    pulseSprite.set_position(SCREEN_CENTER_X, SCREEN_CENTER_Y)
+    hudSprite.set_position(50, 9)
     if healthBarVisible:
         if game.runtime() - lastDamageTime >= 3000:
             health_bar.set_flag(SpriteFlag.INVISIBLE, True)

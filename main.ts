@@ -1,4 +1,11 @@
+let starXPixel: number;
+let starYPixel: number;
+let starColour: number;
 let chest: Sprite;
+let flyingUfo: Sprite;
+let initialAngle: number;
+let initialUfoX: number;
+let initialUfoY: number;
 /** Asteroid orbit angles */
 //  ==================================================
 //  PLANET IMAGE GENERATOR
@@ -262,6 +269,10 @@ function respawn_chest(index: number) {
     let dxChest: number;
     let dyChest: number;
     
+    //  Reset these for EVERY respawn. Without this, later respawns can
+    //  reuse an old position because validPosition stays True.
+    validPosition = false
+    attempts = 0
     while (validPosition == false && attempts < 100) {
         candidateX = randint(150, WORLD_WIDTH - 150)
         candidateY = randint(150, WORLD_HEIGHT - 150)
@@ -527,6 +538,302 @@ let WORLD_WIDTH = 0
 let treasureWorldY : number[] = []
 let treasureWorldX : number[] = []
 let treasureSprites : Sprite[] = []
+let ufoSprites : Sprite[] = []
+let ufoDisabledUntil = [0, 0, 0]
+//  A: tap = 3-second boost; hold 0.45 seconds and release = 1000-pixel hyperjump.
+//  Both A abilities share a 15-second cooldown.
+let boostUntil = 0
+let boostCooldownUntil = 0
+let aPressStart = 0
+let aPressAllowed = false
+let aHolding = false
+let warpFlashUntil = 0
+//  B: hold to charge a capped orb; release = non-damaging UFO-disabling pulse.
+//  The pulse has a 0.5-second cooldown.
+let attackCharging = false
+let attackChargeStart = 0
+let attackChargeLevel = 0
+let attackCooldownUntil = 0
+let attackPulseUntil = 0
+let attackPulseRange = 0
+//  Visual ability sprites and images
+let chargeOrbImages : Image[] = []
+let pulseImages : Image[] = []
+let warpImages : Image[] = []
+let chargeOrbSprite : Sprite = null
+let pulseSprite : Sprite = null
+let warpSprite : Sprite = null
+let hudImage : Image = null
+let hudSprite : Sprite = null
+//  ==================================================
+//  ABILITY VISUALS AND HUD FONT
+//  ==================================================
+function make_charge_orb_image(radius: number): Image {
+    let x: number;
+    let dx: number;
+    let dy: number;
+    let distanceSquared: any;
+    let orbColor: number;
+    let size = radius * 2 + 1
+    let centre = radius
+    let orbImage = image.create(size, size)
+    let y = 0
+    while (y < size) {
+        x = 0
+        while (x < size) {
+            dx = x - centre
+            dy = y - centre
+            distanceSquared = dx * dx + dy * dy
+            if (distanceSquared <= radius * radius) {
+                if (distanceSquared <= (radius - 2) * (radius - 2)) {
+                    orbColor = 1
+                } else if (distanceSquared <= (radius - 1) * (radius - 1)) {
+                    orbColor = 9
+                } else {
+                    orbColor = 13
+                }
+                
+                orbImage.setPixel(x, y, orbColor)
+            }
+            
+            x += 1
+        }
+        y += 1
+    }
+    return orbImage
+}
+
+function make_pulse_image(radius: number): Image {
+    let x: number;
+    let dx: number;
+    let dy: number;
+    let distanceSquared: any;
+    let size = radius * 2 + 1
+    let centre = radius
+    let pulseImage = image.create(size, size)
+    let y = 0
+    while (y < size) {
+        x = 0
+        while (x < size) {
+            dx = x - centre
+            dy = y - centre
+            distanceSquared = dx * dx + dy * dy
+            if (distanceSquared <= radius * radius && distanceSquared >= (radius - 2) * (radius - 2)) {
+                pulseImage.setPixel(x, y, 9)
+            } else if (distanceSquared <= (radius - 6) * (radius - 6) && distanceSquared >= (radius - 8) * (radius - 8)) {
+                pulseImage.setPixel(x, y, 12)
+            }
+            
+            x += 1
+        }
+        y += 1
+    }
+    return pulseImage
+}
+
+function make_warp_image(frame: number): Image {
+    let x: number;
+    let dx: number;
+    let dy: number;
+    let distanceSquared: any;
+    let pattern: any;
+    let size = 49
+    let centre = 24
+    let warpImage = image.create(size, size)
+    let y = 0
+    while (y < size) {
+        x = 0
+        while (x < size) {
+            dx = x - centre
+            dy = y - centre
+            distanceSquared = dx * dx + dy * dy
+            if (distanceSquared >= 11 * 11 && distanceSquared <= 22 * 22) {
+                pattern = (x * 2 + y * 3 + frame * 5) % 13
+                if (pattern < 4) {
+                    warpImage.setPixel(x, y, 9)
+                } else if (pattern < 7) {
+                    warpImage.setPixel(x, y, 13)
+                }
+                
+            } else if (distanceSquared >= 7 * 7 && distanceSquared <= 9 * 9) {
+                warpImage.setPixel(x, y, 1)
+            }
+            
+            x += 1
+        }
+        y += 1
+    }
+    return warpImage
+}
+
+function tiny_glyph(character: string): string[] {
+    let blank = ["000", "000", "000", "000", "000"]
+    if (character == "A") {
+        return ["010", "101", "111", "101", "101"]
+    }
+    
+    if (character == "B") {
+        return ["110", "101", "110", "101", "110"]
+    }
+    
+    if (character == "C") {
+        return ["011", "100", "100", "100", "011"]
+    }
+    
+    if (character == "D") {
+        return ["110", "101", "101", "101", "110"]
+    }
+    
+    if (character == "E") {
+        return ["111", "100", "110", "100", "111"]
+    }
+    
+    if (character == "K") {
+        return ["101", "101", "110", "101", "101"]
+    }
+    
+    if (character == "O") {
+        return ["010", "101", "101", "101", "010"]
+    }
+    
+    if (character == "R") {
+        return ["110", "101", "110", "101", "101"]
+    }
+    
+    if (character == "S") {
+        return ["011", "100", "010", "001", "110"]
+    }
+    
+    if (character == "T") {
+        return ["111", "010", "010", "010", "010"]
+    }
+    
+    if (character == "Y") {
+        return ["101", "101", "010", "010", "010"]
+    }
+    
+    if (character == "0") {
+        return ["111", "101", "101", "101", "111"]
+    }
+    
+    if (character == "1") {
+        return ["010", "110", "010", "010", "111"]
+    }
+    
+    if (character == "2") {
+        return ["110", "001", "010", "100", "111"]
+    }
+    
+    if (character == "3") {
+        return ["110", "001", "010", "001", "110"]
+    }
+    
+    if (character == "4") {
+        return ["101", "101", "111", "001", "001"]
+    }
+    
+    if (character == "5") {
+        return ["111", "100", "110", "001", "110"]
+    }
+    
+    if (character == "6") {
+        return ["011", "100", "110", "101", "010"]
+    }
+    
+    if (character == "7") {
+        return ["111", "001", "010", "010", "010"]
+    }
+    
+    if (character == "8") {
+        return ["010", "101", "010", "101", "010"]
+    }
+    
+    if (character == "9") {
+        return ["010", "101", "011", "001", "110"]
+    }
+    
+    if (character == ":") {
+        return ["000", "010", "000", "010", "000"]
+    }
+    
+    if (character == ".") {
+        return ["000", "000", "000", "000", "010"]
+    }
+    
+    return blank
+}
+
+function draw_tiny_text(target: Image, textValue: string, startX: number, startY: number, color: number) {
+    let glyph: string[];
+    let row: number;
+    let column: number;
+    let charIndex = 0
+    while (charIndex < textValue.length) {
+        glyph = tiny_glyph(textValue[charIndex])
+        row = 0
+        while (row < 5) {
+            column = 0
+            while (column < 3) {
+                if (glyph[row][column] == "1") {
+                    target.setPixel(startX + charIndex * 4 + column, startY + row, color)
+                }
+                
+                column += 1
+            }
+            row += 1
+        }
+        charIndex += 1
+    }
+}
+
+function time_label(milliseconds: number) {
+    if (milliseconds < 0) {
+        milliseconds = 0
+    }
+    
+    let tenths = Math.idiv(milliseconds + 99, 100)
+    return "" + Math.idiv(tenths, 10) + "." + ("" + tenths % 10) + "S"
+}
+
+function facing_x(): number {
+    let direction = mySprite.rotationDegrees
+    if (direction == 90) {
+        return 1
+    } else if (direction == -90 || direction == 270) {
+        return -1
+    }
+    
+    return 0
+}
+
+function facing_y(): number {
+    let direction = mySprite.rotationDegrees
+    if (direction == 180) {
+        return 1
+    } else if (direction == 0) {
+        return -1
+    }
+    
+    return 0
+}
+
+function perform_hyperjump() {
+    
+    
+    let directionX = facing_x()
+    let directionY = facing_y()
+    let destinationX = shipWorldX + directionX * 1000
+    let destinationY = shipWorldY + directionY * 1000
+    //  Wrap to the opposite edge if the 1000-pixel jump crosses a border.
+    shipWorldX = 10 + (destinationX - 10) % (WORLD_WIDTH - 20)
+    shipWorldY = 10 + (destinationY - 10) % (WORLD_HEIGHT - 20)
+    shipVX = directionX * 0.8
+    shipVY = directionY * 0.8
+    boostUntil = 0
+    boostCooldownUntil = game.runtime() + 15000
+    warpFlashUntil = game.runtime() + 550
+}
+
 //  ==================================================
 //  SPACE TREASURE COLLECTOR
 //  EXPANDED SOLAR SYSTEM + LIVE MINIMAP
@@ -598,9 +905,26 @@ radius3 = 400
 //  ==================================================
 //  BACKGROUND
 //  ==================================================
-//  Completely black background.
-//  No white dots or background star sprites.
-scene.setBackgroundColor(15)
+//  BLACK SPACE BACKGROUND WITH A SPARSE WHITE STARFIELD
+//  This is a background image, not sprite objects, so it will not
+//  interfere with treasure, asteroid, or UFO collisions.
+let spaceBackground = image.create(160, 120)
+spaceBackground.fill(15)
+let starDot = 0
+while (starDot < 85) {
+    starXPixel = randint(0, 159)
+    starYPixel = randint(0, 119)
+    starColour = 1
+    if (starDot % 3 == 0) {
+        starColour = 12
+    } else if (starDot % 5 == 0) {
+        starColour = 13
+    }
+    
+    spaceBackground.setPixel(starXPixel, starYPixel, starColour)
+    starDot += 1
+}
+scene.setBackgroundImage(spaceBackground)
 //  ==================================================
 //  RED GRADIENT BACKGROUND
 //  ==================================================
@@ -810,6 +1134,187 @@ let asteroid1 = create_asteroid(1)
 let asteroid2 = create_asteroid(2)
 let asteroid3 = create_asteroid(3)
 //  ==================================================
+//  FLYING UFOs
+//  ==================================================
+let ufoImage = img`
+    . . . . . . 8 8 8 8 . . . . . .
+    . . . 8 8 8 9 9 9 9 8 8 8 . . .
+    . . 8 9 9 9 9 9 9 9 9 9 9 8 . .
+    8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8
+    . . . 8 8 8 8 8 8 8 8 8 8 . . .
+    . . . . . 8 . . . . 8 . . . . .
+    `
+let UFO_COUNT = 3
+//  Each UFO loops around its own nearby point, at a different speed.
+let ufoCentreX = [1365, 1450, 1500]
+let ufoCentreY = [1500, 1500, 1600]
+let ufoRadiusX = [55, 80, 100]
+let ufoRadiusY = [35, 50, 55]
+let ufoStartAngle = [0, 1.57, 3.14]
+let ufoOrbitSpeed = [0.00036, 0.00031, 0.00025]
+let ufoIndex = 0
+while (ufoIndex < UFO_COUNT) {
+    flyingUfo = sprites.create(ufoImage, SpriteKind.Enemy)
+    flyingUfo.z = 35
+    //  Place each UFO away from the ship before the first game update.
+    initialAngle = game.runtime() * ufoOrbitSpeed[ufoIndex] + ufoStartAngle[ufoIndex]
+    initialUfoX = ufoCentreX[ufoIndex] + Math.cos(initialAngle) * ufoRadiusX[ufoIndex]
+    initialUfoY = ufoCentreY[ufoIndex] + Math.sin(initialAngle) * ufoRadiusY[ufoIndex]
+    flyingUfo.setPosition(initialUfoX - shipWorldX + SCREEN_CENTER_X, initialUfoY - shipWorldY + SCREEN_CENTER_Y)
+    ufoSprites.push(flyingUfo)
+    ufoIndex += 1
+}
+//  ==================================================
+//  CHARGED B PULSE
+//  Hold B to charge a glowing orb. Releasing B sends a
+//  non-damaging defensive pulse around the ship.
+//  ==================================================
+chargeOrbImages = [make_charge_orb_image(3), make_charge_orb_image(4), make_charge_orb_image(5), make_charge_orb_image(6), make_charge_orb_image(7), make_charge_orb_image(8)]
+pulseImages = [make_pulse_image(12), make_pulse_image(15), make_pulse_image(18), make_pulse_image(21), make_pulse_image(24), make_pulse_image(27)]
+warpImages = [make_warp_image(0), make_warp_image(1), make_warp_image(2), make_warp_image(3)]
+chargeOrbSprite = sprites.create(chargeOrbImages[0], SpriteKind.Projectile)
+chargeOrbSprite.setFlag(SpriteFlag.Ghost, true)
+chargeOrbSprite.setFlag(SpriteFlag.RelativeToCamera, true)
+chargeOrbSprite.setFlag(SpriteFlag.Invisible, true)
+chargeOrbSprite.z = 160
+pulseSprite = sprites.create(pulseImages[0], SpriteKind.Projectile)
+pulseSprite.setFlag(SpriteFlag.Ghost, true)
+pulseSprite.setFlag(SpriteFlag.RelativeToCamera, true)
+pulseSprite.setFlag(SpriteFlag.Invisible, true)
+pulseSprite.setPosition(SCREEN_CENTER_X, SCREEN_CENTER_Y)
+pulseSprite.z = 150
+warpSprite = sprites.create(warpImages[0], SpriteKind.Projectile)
+warpSprite.setFlag(SpriteFlag.Ghost, true)
+warpSprite.setFlag(SpriteFlag.RelativeToCamera, true)
+warpSprite.setFlag(SpriteFlag.Invisible, true)
+warpSprite.setPosition(SCREEN_CENTER_X, SCREEN_CENTER_Y)
+warpSprite.z = 90
+//  Small pixel-font HUD avoids requiring another extension.
+hudImage = image.create(100, 16)
+hudImage.fill(15)
+hudSprite = sprites.create(hudImage, SpriteKind.Projectile)
+hudSprite.setFlag(SpriteFlag.Ghost, true)
+hudSprite.setFlag(SpriteFlag.RelativeToCamera, true)
+hudSprite.setPosition(50, 9)
+hudSprite.z = 260
+controller.B.onEvent(ControllerButtonEvent.Pressed, function on_b_pressed() {
+    
+    if (gameEnded || endingState != ENDING_NORMAL) {
+        return
+    }
+    
+    if (attackCharging || game.runtime() < attackCooldownUntil) {
+        return
+    }
+    
+    attackCharging = true
+    attackChargeStart = game.runtime()
+    attackChargeLevel = 0
+    chargeOrbSprite.setImage(chargeOrbImages[0])
+    chargeOrbSprite.setFlag(SpriteFlag.Invisible, false)
+})
+controller.B.onEvent(ControllerButtonEvent.Released, function on_b_released() {
+    let ufoAngle: number;
+    let nearbyUfoX: number;
+    let nearbyUfoY: number;
+    let dxUfo: number;
+    let dyUfo: number;
+    
+    
+    if (!attackCharging) {
+        return
+    }
+    
+    let now = game.runtime()
+    attackCharging = false
+    attackChargeLevel = Math.idiv(now - attackChargeStart, 400)
+    if (attackChargeLevel > chargeOrbImages.length - 1) {
+        attackChargeLevel = chargeOrbImages.length - 1
+    }
+    
+    attackPulseRange = 120 + attackChargeLevel * 30
+    attackPulseUntil = now + 450
+    attackCooldownUntil = now + 500
+    chargeOrbSprite.setFlag(SpriteFlag.Invisible, true)
+    pulseSprite.setImage(pulseImages[attackChargeLevel])
+    pulseSprite.setPosition(SCREEN_CENTER_X, SCREEN_CENTER_Y)
+    pulseSprite.setFlag(SpriteFlag.Invisible, false)
+    //  The pulse briefly disables any UFOs close enough to the ship.
+    let ufoIndex = 0
+    while (ufoIndex < UFO_COUNT) {
+        ufoAngle = now * ufoOrbitSpeed[ufoIndex] + ufoStartAngle[ufoIndex]
+        nearbyUfoX = ufoCentreX[ufoIndex] + Math.cos(ufoAngle) * ufoRadiusX[ufoIndex]
+        nearbyUfoY = ufoCentreY[ufoIndex] + Math.sin(ufoAngle) * ufoRadiusY[ufoIndex]
+        dxUfo = nearbyUfoX - shipWorldX
+        dyUfo = nearbyUfoY - shipWorldY
+        if (dxUfo * dxUfo + dyUfo * dyUfo <= attackPulseRange * attackPulseRange) {
+            ufoDisabledUntil[ufoIndex] = now + 2200
+        }
+        
+        ufoIndex += 1
+    }
+})
+controller.A.onEvent(ControllerButtonEvent.Pressed, function on_a_pressed() {
+    
+    if (gameEnded || endingState != ENDING_NORMAL) {
+        return
+    }
+    
+    let now = game.runtime()
+    aPressStart = now
+    aPressAllowed = now >= boostCooldownUntil
+    aHolding = aPressAllowed
+    if (aHolding) {
+        warpSprite.setFlag(SpriteFlag.Invisible, false)
+    }
+    
+})
+controller.A.onEvent(ControllerButtonEvent.Released, function on_a_released() {
+    
+    let now = game.runtime()
+    let heldFor = now - aPressStart
+    let wasAllowed = aPressAllowed
+    aHolding = false
+    if (!wasAllowed || gameEnded || endingState != ENDING_NORMAL) {
+        warpSprite.setFlag(SpriteFlag.Invisible, true)
+        return
+    }
+    
+    if (heldFor >= 450) {
+        perform_hyperjump()
+    } else {
+        //  A quick tap starts a three-second speed boost.
+        boostUntil = now + 3000
+        boostCooldownUntil = boostUntil + 15000
+        warpFlashUntil = now + 200
+    }
+    
+    warpSprite.setFlag(SpriteFlag.Invisible, false)
+})
+game.onUpdateInterval(100, function update_ability_hud() {
+    let boostText: string;
+    let attackText: string;
+    let now = game.runtime()
+    hudImage.fill(15)
+    if (now < boostUntil) {
+        boostText = "BOOST: " + time_label(boostUntil - now)
+    } else if (now < boostCooldownUntil) {
+        boostText = "BOOST CD: " + time_label(boostCooldownUntil - now)
+    } else {
+        boostText = "BOOST CD: READY"
+    }
+    
+    if (now < attackCooldownUntil) {
+        attackText = "ATK CD: " + time_label(attackCooldownUntil - now)
+    } else {
+        attackText = "ATK CD: READY"
+    }
+    
+    draw_tiny_text(hudImage, boostText, 2, 1, 9)
+    draw_tiny_text(hudImage, attackText, 2, 9, 12)
+    hudSprite.setImage(hudImage)
+})
+//  ==================================================
 //  MINIMAP SETTINGS
 //  ==================================================
 MINIMAP_WIDTH = 64
@@ -835,6 +1340,13 @@ info.setScore(0)
 //  WORLD UPDATE AND CAMERA
 //  ==================================================
 game.onUpdate(function on_on_update() {
+    let warpFrame: number;
+    let facingX: number;
+    let facingY: number;
+    let currentMaxVelocity: number;
+    let ufoAngle: number;
+    let ufoWorldX: number;
+    let ufoWorldY: number;
     
     if (gameEnded) {
         return
@@ -854,19 +1366,60 @@ game.onUpdate(function on_on_update() {
     }
     
     //  ----------------------------------------------
-    //  SHIP ACCELERATION
+    //  A-BUTTON WORMHOLE VISUAL WHILE HELD
     //  ----------------------------------------------
-    acceleration = shipSpeed / 200
+    let abilityNow = game.runtime()
+    if (aHolding) {
+        warpFrame = Math.idiv(abilityNow, 100) % warpImages.length
+        warpSprite.setImage(warpImages[warpFrame])
+        warpSprite.rotationDegrees = Math.idiv(abilityNow, 8) % 360
+        warpSprite.setPosition(SCREEN_CENTER_X, SCREEN_CENTER_Y)
+        warpSprite.setFlag(SpriteFlag.Invisible, false)
+    } else if (abilityNow >= warpFlashUntil) {
+        warpSprite.setFlag(SpriteFlag.Invisible, true)
+    }
+    
+    //  ----------------------------------------------
+    //  B-BUTTON CHARGE ORB GROWS WHILE HELD
+    //  ----------------------------------------------
+    if (attackCharging) {
+        attackChargeLevel = Math.idiv(abilityNow - attackChargeStart, 400)
+        if (attackChargeLevel > chargeOrbImages.length - 1) {
+            attackChargeLevel = chargeOrbImages.length - 1
+        }
+        
+        chargeOrbSprite.setImage(chargeOrbImages[attackChargeLevel])
+        facingX = facing_x()
+        facingY = facing_y()
+        chargeOrbSprite.setPosition(SCREEN_CENTER_X + facingX * 22, SCREEN_CENTER_Y + facingY * 22)
+        chargeOrbSprite.setFlag(SpriteFlag.Invisible, false)
+    }
+    
+    if (abilityNow >= attackPulseUntil) {
+        pulseSprite.setFlag(SpriteFlag.Invisible, true)
+    }
+    
+    //  ----------------------------------------------
+    //  SHIP ACCELERATION (BOOST MAKES THE SHIP FASTER)
+    //  ----------------------------------------------
+    if (abilityNow < boostUntil) {
+        acceleration = shipSpeed / 75
+        currentMaxVelocity = 7.5
+    } else {
+        acceleration = shipSpeed / 200
+        currentMaxVelocity = MAX_SHIP_VELOCITY
+    }
+    
     if (controller.left.isPressed() && !controller.right.isPressed()) {
         shipVX += 0 - acceleration
-        if (shipVX < 0 - MAX_SHIP_VELOCITY) {
-            shipVX = 0 - MAX_SHIP_VELOCITY
+        if (shipVX < 0 - currentMaxVelocity) {
+            shipVX = 0 - currentMaxVelocity
         }
         
     } else if (controller.right.isPressed() && !controller.left.isPressed()) {
         shipVX += acceleration
-        if (shipVX > MAX_SHIP_VELOCITY) {
-            shipVX = MAX_SHIP_VELOCITY
+        if (shipVX > currentMaxVelocity) {
+            shipVX = currentMaxVelocity
         }
         
     } else {
@@ -875,14 +1428,14 @@ game.onUpdate(function on_on_update() {
     
     if (controller.up.isPressed() && !controller.down.isPressed()) {
         shipVY += 0 - acceleration
-        if (shipVY < 0 - MAX_SHIP_VELOCITY) {
-            shipVY = 0 - MAX_SHIP_VELOCITY
+        if (shipVY < 0 - currentMaxVelocity) {
+            shipVY = 0 - currentMaxVelocity
         }
         
     } else if (controller.down.isPressed() && !controller.up.isPressed()) {
         shipVY += acceleration
-        if (shipVY > MAX_SHIP_VELOCITY) {
-            shipVY = MAX_SHIP_VELOCITY
+        if (shipVY > currentMaxVelocity) {
+            shipVY = currentMaxVelocity
         }
         
     } else {
@@ -941,6 +1494,24 @@ game.onUpdate(function on_on_update() {
     spriteutils.placeAngleFrom(asteroid2, angle2, radius2, centralStar)
     spriteutils.placeAngleFrom(asteroid3, angle3, radius3, centralStar)
     //  ----------------------------------------------
+    //  UFO FLIGHT PATHS AND DISABLE TIMER
+    //  ----------------------------------------------
+    let ufoNow = game.runtime()
+    let ufoIndex = 0
+    while (ufoIndex < UFO_COUNT) {
+        ufoAngle = ufoNow * ufoOrbitSpeed[ufoIndex] + ufoStartAngle[ufoIndex]
+        ufoWorldX = ufoCentreX[ufoIndex] + Math.cos(ufoAngle) * ufoRadiusX[ufoIndex]
+        ufoWorldY = ufoCentreY[ufoIndex] + Math.sin(ufoAngle) * ufoRadiusY[ufoIndex]
+        ufoSprites[ufoIndex].setPosition(ufoWorldX - shipWorldX + SCREEN_CENTER_X, ufoWorldY - shipWorldY + SCREEN_CENTER_Y)
+        if (ufoNow < ufoDisabledUntil[ufoIndex]) {
+            ufoSprites[ufoIndex].setFlag(SpriteFlag.Ghost, true)
+        } else {
+            ufoSprites[ufoIndex].setFlag(SpriteFlag.Ghost, false)
+        }
+        
+        ufoIndex += 1
+    }
+    //  ----------------------------------------------
     //  TREASURE CHEST POSITIONS
     //  ----------------------------------------------
     let m = 0
@@ -967,6 +1538,8 @@ game.onUpdate(function on_on_update() {
     //  HEALTH BAR
     //  ----------------------------------------------
     health_bar.setPosition(SCREEN_CENTER_X, SCREEN_CENTER_Y - 15)
+    pulseSprite.setPosition(SCREEN_CENTER_X, SCREEN_CENTER_Y)
+    hudSprite.setPosition(50, 9)
     if (healthBarVisible) {
         if (game.runtime() - lastDamageTime >= 3000) {
             health_bar.setFlag(SpriteFlag.Invisible, true)
