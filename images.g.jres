@@ -1,0 +1,17 @@
+{
+    "image1": {
+        "data": "hwQPABAAAAAAAPD///8AAADwv7u7+wAAAL+7u7sPAAAAv7u7uw/wD/C7u7u7+7/78Lu7u7u7u/vwu7u7u7u7+/C7u7u7u7v78Lu7u7u7u/vwu7u7u7u7+/C7u7u7u7v7AL+7u7u7uw8Av/v/u7u7DwDwDwC/u/8AAAAAAPD/AAA=",
+        "mimeType": "image/x-mkcd-f4",
+        "displayName": "Asteroid"
+    },
+    "image2": {
+        "data": "hwQQABAAAAAAAAAAAPAPAAAAAAAAv/sAAAAAAAC/+wAAAAAAAL/7AAAAAPD/u7v/AAD/v7v7v/sA/7u7+5/5+/C2u7tvmfn78La7u2+Z+fsA/7u7+5/5+wAA/7+7+7/7AAAA8P+7u/8AAAAAAL/7AAAAAAAAv/sAAAAAAAC/+wAAAAAAAPAPAA==",
+        "mimeType": "image/x-mkcd-f4",
+        "displayName": "ship"
+    },
+    "*": {
+        "mimeType": "image/x-mkcd-f4",
+        "dataEncoding": "base64",
+        "namespace": "myImages"
+    }
+}
