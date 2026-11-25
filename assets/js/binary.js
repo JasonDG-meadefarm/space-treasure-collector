@@ -1,4 +1,4 @@
-// meta={"simUrl":"https://trg-arcade.userpxt.io/v4.1.32/---simulator","cdnUrl":"https://cdn.makecode.com","version":"1.1.0","target":"arcade","targetVersion":"4.1.32","repo":"jasondg-meadefarm/space-treasure-collector"}
+// meta={"simUrl":"https://trg-arcade.userpxt.io/v4.1.32/---simulator","cdnUrl":"https://cdn.makecode.com","version":"1.0.1","target":"arcade","targetVersion":"4.1.32","repo":"jasondg-meadefarm/space-treasure-collector"}
 // total=2394781 new=9.25% cached=68.27% other=22.48%
 (function (ectx) {
 'use strict';
